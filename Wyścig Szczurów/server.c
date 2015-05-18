@@ -5,7 +5,7 @@
  * and overlooking general game strategy
  *
  *  Created on: 17 maj 2015
- *      Author: monika
+ *      Author: Monika Żurkowska
  */
 #define _GNU_SOURCE
 
@@ -20,8 +20,7 @@
 #include "client.h"
 
 #define BACKLOG 3
-
-struct Client clients[1000];
+#define MAX_CLIENT 1000
 
 int getfromclient(int, char*, fd_set*);
 int sendtoclient(int, char*, fd_set*);
@@ -48,7 +47,7 @@ int create_socket(int port)
 	return 0;
 }
 
-int addnewclient (int s, fd_set *mfds, int *fdmax)
+int addnewclient (int s, fd_set *mfds, int *fdmax/*, struct GameInfo* gameInfo*/)
 {
 	int fd;
 
@@ -57,14 +56,19 @@ int addnewclient (int s, fd_set *mfds, int *fdmax)
 
 	FD_SET(fd, mfds);
 	*fdmax = (*fdmax < fd) ? fd : *fdmax;
+
+	/*gameInfo->clients[fd]->fd = fd;
+	gameInfo->clients[fd]->rank = 0;*/
+
 	return 1;
 }
 
-int deleteclient(int s, fd_set *mfds)
+int deleteclient(int s, fd_set *mfds/*, struct GameInfo* gameInfo*/)
 {
 	if (TEMP_FAILURE_RETRY(close(s)) == -1)
 		error("Cannot close socket");
 	FD_CLR(s, mfds);
+	//gameInfo->clients[s] = NULL;
 	return 1;
 }
 
@@ -99,7 +103,6 @@ int getfromclient(int s, char* buf, fd_set *mfds)
 int sendtoclient(int s, char* buf, fd_set* mfds)
 {
 	int writb;
-	fprintf(stderr, "Size of buf: %d", strlen(buf));
 	writb = wwrite(s, buf, strlen(buf));
 
 	if (writb == -1)
@@ -118,7 +121,7 @@ int sendtoclient(int s, char* buf, fd_set* mfds)
 	return 0;
 }
 
-void serverwork(int s)
+void serverwork(int s/*, struct GameInfo* gameInfo*/)
 {
 	int i, clientcount = 0;
 	int fdmax = s;
@@ -126,6 +129,7 @@ void serverwork(int s)
 
 	FD_ZERO(&mfds);
 	FD_SET(s, &mfds);
+	fprintf(stderr, "Listening for clients....\n");
 
 	while (work)
 	{
@@ -141,13 +145,13 @@ void serverwork(int s)
 			{
 				if (s == i)
 				{
-					clientcount += addnewclient(s, &mfds, &fdmax);
+					clientcount += addnewclient(s, &mfds, &fdmax/*, gameInfo*/);
 					fprintf(stderr, "Added new client\n");
 					fprintf(stderr, "Current client count: %d\n", clientcount);
 				}
 				else
 				{
-					clientcount -= deleteclient(i, &mfds);
+					clientcount -= deleteclient(i, &mfds/*, gameInfo*/);
 					fprintf(stderr, "Deleted client\n");
 					fprintf(stderr, "Current client count: %d\n", clientcount);
 				}
@@ -177,13 +181,18 @@ int main(int argc, char **argv)
 	if (port < 1 || port > 65535)
 		USAGE(argv[0]);
 
+	//if ((*gameInfo.clients = (struct Client*)calloc(MAX_CLIENT, sizeof(struct Client))) == NULL)
+	//	error("Cannot allocate memory for Client array");
+
 	work = 1;
 	registerhandlers();
 	s = create_socket(port);
-	serverwork(s);
+	fprintf(stderr, "Created Server socket\n");
+	serverwork(s/*, &gameInfo*/);
 
 	if (TEMP_FAILURE_RETRY(close(s)) == -1)
 		error("Cannot close socket");
+	//free(*gameInfo.clients);
 
 	return EXIT_SUCCESS;
 }

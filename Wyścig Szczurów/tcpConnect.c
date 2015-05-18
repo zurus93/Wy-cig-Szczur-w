@@ -41,7 +41,7 @@ ssize_t wread(int fd, char** buf, size_t size)
 
 	while (nleft > 0)
 	{
-		if ((nread = recv(fd, p, nleft)) == -1)
+		if ((nread = read(fd, p, nleft)) == -1)
 		{
 			if (errno == EINTR) nread = 0;
 			else return -1;

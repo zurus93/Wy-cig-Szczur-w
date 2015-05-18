@@ -1,6 +1,7 @@
 /*
  * tcpConnect.h
  * Class responsible for maintaning tcp connection
+ *
  *  Created on: 17 maj 2015
  *      Author: Monika Żurkowska
  */

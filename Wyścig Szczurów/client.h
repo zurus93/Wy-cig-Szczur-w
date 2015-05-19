@@ -18,7 +18,14 @@ struct Client
 
 struct GameInfo
 {
+	pthread_mutex_t clients_mutex;
 	struct Client** clients;
 }gameInfo;
+
+struct ServerThreadParams
+{
+	int s;
+	struct GameInfo* gameInfo;
+}serverThreadParams;
 
 #endif /* CLIENT_H_ */

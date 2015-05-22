@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
+#include <pthread.h>
 
 volatile sig_atomic_t work;
 
@@ -23,5 +24,7 @@ void siginthandler(int);
 void registerhandlers(void);
 ssize_t wread(int, char**, size_t);
 ssize_t wwrite(int, const char*, size_t);
+void safemutexlock(pthread_mutex_t* mutex);
+void safemutexunlock(pthread_mutex_t* mutex);
 
 #endif /* TCPCONNECT_H_ */

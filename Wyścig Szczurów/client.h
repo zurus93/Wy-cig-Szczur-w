@@ -9,17 +9,23 @@
 #ifndef CLIENT_H_
 #define CLIENT_H_
 
+#define MAX_CLIENT 1000
+
 struct Client
 {
 	int fd;
+	int index;
 	int rank;
-	char nick[10];
+	int numOfPlayedGames;
 };
 
 struct GameInfo
 {
-	pthread_mutex_t clients_mutex;
+	pthread_mutex_t clients_mutex[MAX_CLIENT];
+	pthread_mutex_t numOfClients_mutex;
 	struct Client** clients;
+	int numOfClients;
+	int** games;
 }gameInfo;
 
 struct ServerThreadParams

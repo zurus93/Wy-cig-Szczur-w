@@ -74,3 +74,15 @@ ssize_t wwrite (int fd, const char* buf, size_t size)
 	return size;
 }
 
+void safemutexlock (pthread_mutex_t* mutex)
+{
+	if (pthread_mutex_lock(mutex))
+		error("Cannot lock mutex");
+}
+
+void safemutexunlock (pthread_mutex_t* mutex)
+{
+	if (pthread_mutex_unlock(mutex))
+		error("Cannot unlock mutex");
+}
+

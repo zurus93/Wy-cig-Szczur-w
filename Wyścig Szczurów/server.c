@@ -25,6 +25,7 @@
 int getfromclient(int, char*, fd_set*);
 int sendtoclient(int, char*, fd_set*);
 int deleteclient(int, fd_set*, struct GameInfo*);
+int factorial(int);
 
 int create_socket(int port)
 {
@@ -50,7 +51,7 @@ int create_socket(int port)
 
 int addnewclient (int s, fd_set *mfds, int *fdmax, struct GameInfo* gameInfo)
 {
-	int fd, i;
+	int fd, i, index;
 	char buf[100];
 	int found = 0;
 
@@ -59,10 +60,6 @@ int addnewclient (int s, fd_set *mfds, int *fdmax, struct GameInfo* gameInfo)
 
 	FD_SET(fd, mfds);
 	*fdmax = (*fdmax < fd) ? fd : *fdmax;
-
-	safemutexlock(&(gameInfo->numOfClients_mutex));
-	gameInfo->numOfClients++;
-	safemutexunlock(&(gameInfo->numOfClients_mutex));
 
 	safemutexlock(&(gameInfo->numOfClients_mutex));
 	if (gameInfo->numOfClients >= MAX_CLIENT)
@@ -75,70 +72,96 @@ int addnewclient (int s, fd_set *mfds, int *fdmax, struct GameInfo* gameInfo)
 		return 0;
 	}
 	else
-		safemutexunlock(&(gameInfo->numOfClients_mutex));
-
-	i = fd%MAX_CLIENT;
-	safemutexlock(&(gameInfo->clients_mutex[i]));
-	if (gameInfo->clients[i] != NULL)
 	{
-		safemutexunlock(&(gameInfo->clients_mutex[i]));
-		while ((i = (i+1)%MAX_CLIENT) != fd%MAX_CLIENT)
+		gameInfo->numOfClients++;
+		safemutexunlock(&(gameInfo->numOfClients_mutex));
+	}
+
+	safemutexlock(&(gameInfo->numOfGames_mutex));
+	gameInfo->numOfGames = factorial(gameInfo->numOfClients);
+	safemutexunlock(&(gameInfo->numOfGames_mutex));
+
+	index = fd%MAX_CLIENT;
+	safemutexlock(&(gameInfo->clients_mutex[index]));
+	if (gameInfo->clients[index] != NULL)
+	{
+		safemutexunlock(&(gameInfo->clients_mutex[index]));
+		while ((index = (index+1)%MAX_CLIENT) != fd%MAX_CLIENT)
 		{
-			safemutexlock(&(gameInfo->clients_mutex[i]));
-			if (gameInfo->clients[i] == NULL)
+			safemutexlock(&(gameInfo->clients_mutex[index]));
+			if (gameInfo->clients[index] == NULL)
 			{
 				found = 1;
 				break;
 			}
 			if (!found)
-				safemutexunlock(&(gameInfo->clients_mutex[i]));
+				safemutexunlock(&(gameInfo->clients_mutex[index]));
 		}
 	}
 
-	gameInfo->clients[i]->fd = fd;
-	gameInfo->clients[i]->index = i;
-	gameInfo->clients[i]->rank = 0;
-	safemutexunlock(&(gameInfo->clients_mutex[i]));
+	gameInfo->clients[index]->fd = fd;
+	gameInfo->clients[index]->index = index;
+	gameInfo->clients[index]->rank = 0;
+	safemutexunlock(&(gameInfo->clients_mutex[index]));
 
 	if (snprintf(buf, 20, "Your nick is: %d", fd) == -1)
 		error("Cannot initialize buffer");
 
 	sendtoclient(fd, buf, mfds);
 
+	safemutexlock(&(gameInfo->games_mutex));
+	for (i = 0; i < MAX_CLIENT; ++i)
+	{
+		gameInfo->games[index][i] = 1;
+		gameInfo->games[i][index] = 1;
+	}
+	safemutexunlock(&(gameInfo->games_mutex));
+
 	return 1;
 }
 
 int deleteclient(int s, fd_set *mfds, struct GameInfo* gameInfo)
 {
-	int i;
+	int i, index;
 	int found = 0;
 	if (TEMP_FAILURE_RETRY(close(s)) == -1)
 		error("Cannot close socket");
 	FD_CLR(s, mfds);
 
-	i = s%MAX_CLIENT;
-	safemutexlock(&(gameInfo->clients_mutex[i]));
-	if (gameInfo->clients[i] == NULL || gameInfo->clients[i]->fd%MAX_CLIENT != gameInfo->clients[i]->index)
+	index = s%MAX_CLIENT;
+	safemutexlock(&(gameInfo->clients_mutex[index]));
+	if (gameInfo->clients[index] == NULL || gameInfo->clients[index]->fd%MAX_CLIENT != gameInfo->clients[index]->index)
 	{
-		safemutexunlock(&(gameInfo->clients_mutex[i]));
-		while ((i = (i+1)%MAX_CLIENT) != s%MAX_CLIENT)
+		safemutexunlock(&(gameInfo->clients_mutex[index]));
+		while ((index = (index+1)%MAX_CLIENT) != s%MAX_CLIENT)
 		{
-			safemutexlock(&(gameInfo->clients_mutex[i]));
-			if (gameInfo->clients[i] != NULL && gameInfo->clients[i]->fd == s)
+			safemutexlock(&(gameInfo->clients_mutex[index]));
+			if (gameInfo->clients[index] != NULL && gameInfo->clients[index]->fd == s)
 			{
 				found = 1;
 				break;
 			}
 			if (!found)
-				safemutexunlock(&(gameInfo->clients_mutex[i]));
+				safemutexunlock(&(gameInfo->clients_mutex[index]));
 		}
 	}
-	gameInfo->clients[i] = NULL;
-	safemutexunlock(&(gameInfo->clients_mutex[i]));
+	gameInfo->clients[index] = NULL;
+	safemutexunlock(&(gameInfo->clients_mutex[index]));
 
 	safemutexlock(&(gameInfo->numOfClients_mutex));
 	gameInfo->numOfClients--;
 	safemutexunlock(&(gameInfo->numOfClients_mutex));
+
+	safemutexlock(&(gameInfo->numOfGames_mutex));
+	gameInfo->numOfGames = factorial(gameInfo->numOfClients);
+	safemutexunlock(&(gameInfo->numOfGames_mutex));
+
+	safemutexlock(&(gameInfo->games_mutex));
+	for (i = 0; i < MAX_CLIENT; ++i)
+	{
+		gameInfo->games[index][i] = 0;
+		gameInfo->games[i][index] = 0;
+	}
 
 	return 1;
 }
@@ -192,7 +215,15 @@ int sendtoclient(int s, char* buf, fd_set* mfds)
 	return 0;
 }
 
-void* serverwork(void* arg/*, struct GameInfo* gameInfo*/)
+int factorial(int n)
+{
+	int f = 1;
+	while (n-- > 0)
+		f *= n;
+	return f;
+}
+
+void* serverwork(void* arg)
 {
 	struct ServerThreadParams* stp = (struct ServerThreadParams*)arg;
 	int s = stp->s;
@@ -235,7 +266,76 @@ void* serverwork(void* arg/*, struct GameInfo* gameInfo*/)
 	fprintf(stderr, " - SIGINT received. Closing program\n");
 	FD_CLR(s, &mfds);
 	clearallsockets(fdmax, &mfds);
-	return (void*)0;
+	return (void*)EXIT_SUCCESS;
+}
+
+void* gamework(void* arg)
+{
+	return (void*)EXIT_SUCCESS;
+}
+
+void playgame(struct GameInfo* gameInfo)
+{
+	int i, j;
+	while (1)
+	{
+		for (i = 0; i < MAX_CLIENT; ++i)
+		{
+			for (j = 0; j < MAX_CLIENT; ++j)
+			{
+				if (i == j)
+					continue;
+				safemutexlock(&(gameInfo->games_mutex));
+				if (gameInfo->games[i][j] == 1)
+				{
+					pthread_create(&(gameInfo->tids[i][j]), NULL, gamework, &serverThreadParams);
+				}
+			}
+		}
+	}
+
+}
+
+void initilizecomponents(struct GameInfo* gameInfo)
+{
+	int i;
+	if ((gameInfo->clients = (struct Client**)calloc(MAX_CLIENT, sizeof(struct Client*))) == NULL)
+		error("Cannot allocate memory for Client array");
+	if ((gameInfo->games = (int**)calloc(MAX_CLIENT, sizeof(int*))) == NULL)
+		error("Cannot allocate memory of games array");
+	if ((gameInfo->tids = (pthread_t**)calloc(MAX_CLIENT, sizeof(pthread_t*))) == NULL)
+		error("Cannot allocate memory of tids array");
+	for (i = 0; i < MAX_CLIENT; ++i)
+	{
+		pthread_mutex_init(&(gameInfo->clients_mutex[i]), NULL);
+		if ((gameInfo->clients[i] = (struct Client*)calloc(1, sizeof(struct Client))) == NULL)
+			error("Cannot allocate memory for Client array");
+		if ((gameInfo->games[i] = (int*)calloc(1, sizeof(int))) == NULL)
+			error("Cannot allocate memory for games array");
+		if ((gameInfo->tids[i] = (pthread_t*)calloc(1, sizeof(pthread_t))) == NULL)
+			error("Cannot allocate memory for tids array");
+	}
+	gameInfo->numOfClients = 0;
+	gameInfo->numOfGames = 0;
+	gameInfo->numOfPlayedGames = 0;
+	pthread_mutex_init(&(gameInfo->numOfClients_mutex), NULL);
+	pthread_mutex_init(&(gameInfo->numOfGames_mutex), NULL);
+	pthread_mutex_init(&(gameInfo->games_mutex), NULL);
+	//pthread_mutex_init(&(gameInfo.clients_mutex), NULL);
+}
+
+void deletecomponents(struct GameInfo* gameInfo)
+{
+	int i;
+	for (i = 0; i < MAX_CLIENT; ++i)
+	{
+		free(gameInfo->clients[i]);
+		free(gameInfo->games[i]);
+		free(gameInfo->tids[i]);
+	}
+	free(gameInfo->clients);
+	free(gameInfo->games);
+	free(gameInfo->tids);
 }
 
 void USAGE(char* name)
@@ -248,7 +348,7 @@ void USAGE(char* name)
 
 int main(int argc, char **argv)
 {
-	int s, port, i;
+	int s, port;
 	pthread_t tid;
 	void* retval;
 	sigset_t mask;
@@ -261,22 +361,7 @@ int main(int argc, char **argv)
 	if (port < 1 || port > 65535)
 		USAGE(argv[0]);
 
-	if ((gameInfo.clients = (struct Client**)calloc(MAX_CLIENT, sizeof(struct Client*))) == NULL)
-		error("Cannot allocate memory for Client array");
-	if ((gameInfo.games = (int**)calloc(MAX_CLIENT, sizeof(int*))) == NULL)
-		error("Cannot allocate memory of games array");
-	for (i = 0; i < MAX_CLIENT; ++i)
-	{
-		pthread_mutex_init(&(gameInfo.clients_mutex[i]), NULL);
-		if ((gameInfo.clients[i] = (struct Client*)malloc(sizeof(struct Client))) == NULL)
-			error("Cannot allocate memory for Client array");
-		if ((gameInfo.games[i] = (int*)malloc(sizeof(int))) == NULL)
-			error("Cannot allocate memory for games array");
-	}
-	gameInfo.numOfClients = 0;
-	pthread_mutex_init(&(gameInfo.numOfClients_mutex), NULL);
-	//pthread_mutex_init(&(gameInfo.clients_mutex), NULL);
-
+	initilizecomponents(&gameInfo);
 	work = 1;
 	registerhandlers();
 	s = create_socket(port);
@@ -291,10 +376,8 @@ int main(int argc, char **argv)
 
 	if (TEMP_FAILURE_RETRY(close(s)) == -1)
 		error("Cannot close socket");
-	for (i = 0; i < MAX_CLIENT; ++i)
-		free(gameInfo.clients[i]);
-	free(gameInfo.clients);
 
+	deletecomponents(&gameInfo);
 	return EXIT_SUCCESS;
 }
 

@@ -23,9 +23,14 @@ struct GameInfo
 {
 	pthread_mutex_t clients_mutex[MAX_CLIENT];
 	pthread_mutex_t numOfClients_mutex;
+	pthread_mutex_t numOfGames_mutex;
+	pthread_mutex_t games_mutex;
+	pthread_t** tids;
 	struct Client** clients;
 	int numOfClients;
 	int** games;
+	int numOfGames;
+	int numOfPlayedGames;
 }gameInfo;
 
 struct ServerThreadParams

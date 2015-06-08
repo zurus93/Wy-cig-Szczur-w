@@ -19,7 +19,8 @@ struct Client
 	int indeks;
 	int rank;
 	int numOfPlayedGames;
-	pthread_mutex_t playingGame;
+	int playingGame;
+	pthread_mutex_t playingGame_mutex;
 	pthread_cond_t gameEnded;
 };
 

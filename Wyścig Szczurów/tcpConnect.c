@@ -23,10 +23,10 @@ void registerhandlers(void)
 {
 	struct sigaction sa;
 	memset (&sa, 0, sizeof(sa));
-	sa.sa_handler = siginghandler;
+	/*sa.sa_handler = siginghandler;
 
 	if (sigaction(SIGINT, &sa, NULL) == -1)
-		error("Cannot register SIGINT");
+		error("Cannot register SIGINT");*/
 
 	sa.sa_handler = SIG_IGN;
 	if (sigaction(SIGPIPE, &sa, NULL) == -1)
@@ -39,17 +39,14 @@ ssize_t wread(int fd, char** buf, size_t size)
 	ssize_t nread;
 	char* p = *buf;
 
-	while (nleft > 0)
+	while (1)
 	{
 		if ((nread = read(fd, p, nleft)) == -1)
 		{
-			if (errno == EINTR) nread = 0;
+			if (errno == EINTR)	continue;
 			else return -1;
 		}
-		else if (nread == 0) break;
-
-		nleft -= nread;
-		p += nread;
+		break;
 	}
 	return size - nleft;
 }

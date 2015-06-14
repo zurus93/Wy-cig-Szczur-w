@@ -26,7 +26,6 @@
 int deleteclient(int, fd_set* mfds, struct GameInfo*);
 int factorial(int);
 void sendranking(struct GameInfo* gi);
-void showranking2(struct GameInfo* gi);
 
 int create_socket(int port)
 {
@@ -54,7 +53,6 @@ int addnewclient (int s, fd_set* mfds, int *fdmax, struct GameInfo* gameInfo)
 {
 	int fd, indeks;
 	char buf[100];
-	int found = 0;
 
 	if ((fd = TEMP_FAILURE_RETRY(accept(s, NULL, NULL))) == -1)
 		error("Cannot accept connection");
@@ -62,54 +60,40 @@ int addnewclient (int s, fd_set* mfds, int *fdmax, struct GameInfo* gameInfo)
 	FD_SET(fd, mfds);
 	*fdmax = (*fdmax < fd) ? fd : *fdmax;
 
-	safemutexlock(&(gameInfo->numOfClients_mutex));
+	// Check if the is place for one more player
 	if (gameInfo->numOfClients >= MAX_CLIENT)
 	{
-		safemutexunlock(&(gameInfo->numOfClients_mutex));
 		if(snprintf(buf, 100, "We're sorry, to many log in clients. Try again later") == -1)
 			error("Cannot initialize buffer");
 		wwrite(fd, buf, strlen(buf));
+		fflush(NULL);
 		deleteclient(fd, mfds, gameInfo);
 		return 0;
 	}
 	else
-	{
 		gameInfo->numOfClients++;
-		safemutexunlock(&(gameInfo->numOfClients_mutex));
-	}
 
-	safemutexlock(&(gameInfo->numOfGames_mutex));
+	// Update new number of games to be played
 	gameInfo->numOfGames = factorial(gameInfo->numOfClients);
-	safemutexunlock(&(gameInfo->numOfGames_mutex));
 
 	indeks = fd%MAX_CLIENT;
-	safemutexlock(&(gameInfo->clients_mutex[indeks]));
 	if (gameInfo->clients[indeks] != NULL)
-	{
-		safemutexunlock(&(gameInfo->clients_mutex[indeks]));
 		while ((indeks = (indeks+1)%MAX_CLIENT) != fd%MAX_CLIENT)
-		{
-			safemutexlock(&(gameInfo->clients_mutex[indeks]));
 			if (gameInfo->clients[indeks] == NULL)
-			{
-				found = 1;
 				break;
-			}
-			if (!found)
-				safemutexunlock(&(gameInfo->clients_mutex[indeks]));
-		}
-	}
 
+	safemutexlock(&(gameInfo->clients[indeks]->client_mutex));
 	gameInfo->clients[indeks]->fd = fd;
 	gameInfo->clients[indeks]->indeks = indeks;
 	gameInfo->clients[indeks]->rank = 0;
-	safemutexunlock(&(gameInfo->clients_mutex[indeks]));
-	fprintf(stderr, "Added client: fd = %d, indeks = %d\n", fd, indeks);
+	gameInfo->clients[indeks]->playingGame = 0;
+	safemutexunlock(&(gameInfo->clients[indeks]->client_mutex));
 
 	if (snprintf(buf, 20, "Your nick is: %d\n", fd) == -1)
 		error("Cannot initialize buffer");
 
 	wwrite(fd, buf, strlen(buf));
+	fflush(NULL);
 	pthread_cond_signal(&(gameInfo->changeInClient));
 
 	return 1;
@@ -117,53 +101,42 @@ int addnewclient (int s, fd_set* mfds, int *fdmax, struct GameInfo* gameInfo)
 
 int deleteclient(int s, fd_set* mfds, struct GameInfo* gameInfo)
 {
-	int i, indeks;
-	int found = 0;
+	int i, indeks, gamescount = 0;
 	if (TEMP_FAILURE_RETRY(close(s)) == -1)
 		error("Cannot close socket");
 	FD_CLR(s, mfds);
 
 	indeks = s%MAX_CLIENT;
-	safemutexlock(&(gameInfo->clients_mutex[indeks]));
-	if (gameInfo->clients[indeks] == NULL || gameInfo->clients[indeks]->fd%MAX_CLIENT != gameInfo->clients[indeks]->indeks)
-	{
-		safemutexunlock(&(gameInfo->clients_mutex[indeks]));
+
+	if (gameInfo->clients[indeks] == NULL || (gameInfo->clients[indeks]->fd)%MAX_CLIENT != gameInfo->clients[indeks]->indeks)
 		while ((indeks = (indeks+1)%MAX_CLIENT) != s%MAX_CLIENT)
-		{
-			safemutexlock(&(gameInfo->clients_mutex[indeks]));
 			if (gameInfo->clients[indeks] != NULL && gameInfo->clients[indeks]->fd == s)
-			{
-				found = 1;
-				break;
-			}
-			if (!found)
-				safemutexunlock(&(gameInfo->clients_mutex[indeks]));
-		}
-	}
-	safemutexlock(&(gameInfo->numOfPlayedGames_mutex));
-	gameInfo->numOfPlayedGames -= gameInfo->clients[indeks]->numOfPlayedGames;
-	safemutexunlock(&(gameInfo->numOfPlayedGames_mutex));
+
+
+	safemutexlock(&(gameInfo->clients[indeks]->client_mutex));
 	gameInfo->clients[indeks]->fd = 0;
 	gameInfo->clients[indeks]->indeks = 0;
-	gameInfo->clients[indeks]->numOfPlayedGames = 0;
 	gameInfo->clients[indeks]->rank = 0;
-	safemutexunlock(&(gameInfo->clients_mutex[indeks]));
+	gameInfo->clients[indeks]->playingGame = 0;
+	safemutexunlock(&(gameInfo->clients[indeks]->client_mutex));
 
-	safemutexlock(&(gameInfo->numOfClients_mutex));
+	// Update new number of games to be played
 	gameInfo->numOfClients--;
-	safemutexunlock(&(gameInfo->numOfClients_mutex));
-
-	safemutexlock(&(gameInfo->numOfGames_mutex));
 	gameInfo->numOfGames = factorial(gameInfo->numOfClients);
-	safemutexunlock(&(gameInfo->numOfGames_mutex));
 
 	safemutexlock(&(gameInfo->games_mutex));
 	for (i = 0; i < MAX_CLIENT; ++i)
 	{
+		if (gameInfo->games[indeks][i] == 1)
+			++gamescount;
 		gameInfo->games[indeks][i] = 0;
 		gameInfo->games[i][indeks] = 0;
 	}
 	safemutexunlock(&(gameInfo->games_mutex));
+
+	safemutexlock(&(gameInfo->numOfPlayedGames_mutex));
+	gameInfo->numOfPlayedGames -= gamescount;
+	safemutexunlock(&(gameInfo->numOfPlayedGames_mutex));
 
 	return 1;
 }
@@ -202,7 +175,7 @@ void* serverwork(void* arg)
 	FD_SET(s, &mfds);
 	fprintf(stderr, "Listening for clients....\n");
 
-	while (work)
+	while (1)
 	{
 		curfds = mfds;
 		if (select(fdmax + 1, &curfds, NULL, NULL, NULL) == -1)
@@ -231,7 +204,7 @@ void* serverwork(void* arg)
 			}
 		}
 	}
-	fprintf(stderr, " - SIGINT received. Closing program\n");
+
 	FD_CLR(s, &mfds);
 	clearallsockets(fdmax, &mfds);
 	return (void*)EXIT_SUCCESS;
@@ -252,6 +225,15 @@ void readwords(struct GameInfo* gameInfo)
 		error("Cannot close 'words' file");
 }
 
+void selectwinner (pthread_mutex_t* finishGame_mutex, int* winner, int w, pthread_cond_t* endGame)
+{
+	fflush(NULL);
+	safemutexlock(finishGame_mutex);
+	*winner = w;
+	pthread_cond_signal(endGame);
+	safemutexunlock(finishGame_mutex);
+}
+
 void *game(void* arg)
 {
 	struct GameWorkThreadParams* gwtp = (struct GameWorkThreadParams*)arg;
@@ -263,28 +245,26 @@ void *game(void* arg)
 	if (snprintf(buf, 30, "Your opponent is: %d\n", gwtp->opponent) == -1)
 		error("Cannot initialize buffer");
 
-	wwrite(fd, buf, strlen(buf));
+	if (wwrite(fd, buf, strlen(buf)) == -1)
+	{
+		selectwinner(&(gwtp->gtp->finishGame_mutex), &(gwtp->gtp->winner), gwtp->opponent, &(gwtp->gtp->endGame));
+		return (void*)EXIT_SUCCESS;
+	}
+	fflush(NULL);
 
 	for (i = 0; i < GAME_WORDS; ++i)
 	{
 		if(wwrite(fd, gwtp->words[i], strlen(gwtp->words[i])) == -1)
 		{
-			fprintf(stderr, "Client unconnected\n");
-			safemutexlock(&(gwtp->gtp->finishGame_mutex));
-			gwtp->gtp->winner = gwtp->opponent;
-			safemutexunlock(&(gwtp->gtp->finishGame_mutex));
-			pthread_cond_signal(&(gwtp->gtp->endGame));
+			selectwinner(&(gwtp->gtp->finishGame_mutex), &(gwtp->gtp->winner), gwtp->opponent, &(gwtp->gtp->endGame));
 			return (void*)EXIT_SUCCESS;
 		}
+		fflush(NULL);
 		memset(buf, '\0', sizeof(buf));
 		char* p = buf;
 		if(wread(fd, &p, 30) == -1)
 		{
-			fprintf(stderr, "Client unconnected\n");
-			safemutexlock(&(gwtp->gtp->finishGame_mutex));
-			gwtp->gtp->winner = gwtp->opponent;
-			safemutexunlock(&(gwtp->gtp->finishGame_mutex));
-			pthread_cond_signal(&(gwtp->gtp->endGame));
+			selectwinner(&(gwtp->gtp->finishGame_mutex), &(gwtp->gtp->winner), gwtp->opponent, &(gwtp->gtp->endGame));
 			return (void*)EXIT_SUCCESS;
 		}
 		for(j = 0; j < strlen(gwtp->words[i]) - 1; ++j)
@@ -297,27 +277,16 @@ void *game(void* arg)
 		}
 	}
 
-	safemutexlock(&(gwtp->gtp->finishGame_mutex));
-	gwtp->gtp->winner = gwtp->player;
-	safemutexunlock(&(gwtp->gtp->finishGame_mutex));
-	pthread_cond_signal(&(gwtp->gtp->endGame));
-	pthread_cond_signal(&(gwtp->gtp->gameInfo->clients[indeks]->gameEnded));
+	selectwinner(&(gwtp->gtp->finishGame_mutex), &(gwtp->gtp->winner), gwtp->player, &(gwtp->gtp->endGame));
 
 	return (void*)EXIT_SUCCESS;
 }
 
 void updateRank(struct GameInfo* gi, int winner, int looser)
 {
-	safemutexlock(&(gi->clients_mutex[winner]));
-	fprintf(stderr, "Winner before update %d - rank: %d\n", gi->clients[winner]->fd, gi->clients[winner]->rank);
-	gi->clients[winner]->numOfPlayedGames++;
-	gi->clients[winner]->rank = gi->clients[winner]->rank + 1;
-	fprintf(stderr, "Winner %d - rank: %d\n", gi->clients[winner]->fd, gi->clients[winner]->rank);
-	safemutexunlock(&(gi->clients_mutex[winner]));
-
-	safemutexlock(&(gi->clients_mutex[looser]));
-	gi->clients[looser]->numOfPlayedGames++;
-	safemutexunlock(&(gi->clients_mutex[looser]));
+	safemutexlock(&(gi->clients[winner]->client_mutex));
+	gi->clients[winner]->rank++;
+	safemutexunlock(&(gi->clients[winner]->client_mutex));
 
 	safemutexlock(&(gi->numOfPlayedGames_mutex));
 	gi->numOfPlayedGames++;
@@ -327,13 +296,15 @@ void updateRank(struct GameInfo* gi, int winner, int looser)
 void* playgame(void* arg)
 {
 	struct GameThreadParams* gtp = (struct GameThreadParams*)arg;
+	fflush(NULL);
 
-	safemutexlock(&(gtp->gameInfo->clients[gtp->player1]->playingGame_mutex));
+	// Mark that the clients are currently playing
+	safemutexlock(&(gtp->gameInfo->clients[gtp->player1]->client_mutex));
 	gtp->gameInfo->clients[gtp->player1]->playingGame = 1;
-	safemutexunlock(&(gtp->gameInfo->clients[gtp->player1]->playingGame_mutex));
-	safemutexlock(&(gtp->gameInfo->clients[gtp->player2]->playingGame_mutex));
+	safemutexunlock(&(gtp->gameInfo->clients[gtp->player1]->client_mutex));
+	safemutexlock(&(gtp->gameInfo->clients[gtp->player2]->client_mutex));
 	gtp->gameInfo->clients[gtp->player2]->playingGame = 1;
-	safemutexunlock(&(gtp->gameInfo->clients[gtp->player2]->playingGame_mutex));
+	safemutexunlock(&(gtp->gameInfo->clients[gtp->player2]->client_mutex));
 
 	pthread_t tids[2], tid;
 	int i, j, looser;
@@ -367,185 +338,122 @@ void* playgame(void* arg)
 		++i;
 	}
 
-	//fprintf(stderr, "Lock players: %d-%d\n", gtp->player1, gtp->player2);
-	fprintf(stderr, "Locked players: %d-%d\n", gtp->player1, gtp->player2);
-	/*struct timespec *wait;
-	wait = (struct timespec*)malloc(sizeof(struct timespec));
-	wait->tv_sec = 1;
-	wait->tv_nsec = 0;
-	int busy = 0;
-	if (pthread_mutex_timedlock(&(gtp->gameInfo->clients[gtp->player2]->playingGame), wait))
-	{
-		if (errno != ETIMEDOUT)
-			error("Cannot lock mutex");
-		busy = 1;
-	}
-	if (busy == 1)
-	{
-		pthread_cond_wait(&(gtp->gameInfo->clients[gtp->player2]->gameEnded), &(gtp->gameInfo->clients[gtp->player1]->playingGame));
-		safemutexlock(&(gtp->gameInfo->clients[gtp->player2]->playingGame));
-	}*/
-
 	pthread_create(&(tids[0]), NULL, game, &gwtp1);
 	pthread_create(&(tids[1]), NULL, game, &gwtp2);
 
 	safemutexlock(&(gtp->finishGame_mutex));
-	//while(gtp->winner == 0)
-		pthread_cond_wait(&(gtp->endGame), &(gtp->finishGame_mutex));
+	pthread_cond_wait(&(gtp->endGame), &(gtp->finishGame_mutex));
+
+	// Select player whose lost and send him cancel command
 	tid = gtp->winner == gtp->player1 ? tids[1] : tids[0];
 	pthread_cancel(tid);
 	looser = gtp->winner == gtp->player1 ? gtp->player2 : gtp->player1;
-	wwrite(gtp->gameInfo->clients[looser]->fd, "You lost\n", 10);
-	wwrite(gtp->gameInfo->clients[gtp->winner]->fd, "You won!\n", 10);
+	if (gtp->gameInfo->clients[looser]->fd > 3)
+		wwrite(gtp->gameInfo->clients[looser]->fd, "You lost\n", 10);
+	fflush(NULL);
+	if (gtp->gameInfo->clients[gtp->winner]->fd > 3)
+		wwrite(gtp->gameInfo->clients[gtp->winner]->fd, "You won!\n", 10);
+	fflush(NULL);
 	safemutexunlock(&(gtp->finishGame_mutex));
+
 	updateRank(gtp->gameInfo, gtp->winner, looser);
 
-	pthread_join(tids[0], NULL);
-	pthread_join(tids[1], NULL);
-
-
-	//pthread_cond_signal(&(gtp->gameInfo->finishedGame));
-	//fprintf(stderr, "sent finishedGame signal\n");
-	showranking2(gtp->gameInfo);
-
-	safemutexlock(&(gtp->gameInfo->clients[gtp->player1]->playingGame_mutex));
+	safemutexlock(&(gtp->gameInfo->clients[gtp->player1]->client_mutex));
 	gtp->gameInfo->clients[gtp->player1]->playingGame = 0;
-	safemutexunlock(&(gtp->gameInfo->clients[gtp->player1]->playingGame_mutex));
-	safemutexlock(&(gtp->gameInfo->clients[gtp->player2]->playingGame_mutex));
+	safemutexunlock(&(gtp->gameInfo->clients[gtp->player1]->client_mutex));
+	safemutexlock(&(gtp->gameInfo->clients[gtp->player2]->client_mutex));
 	gtp->gameInfo->clients[gtp->player2]->playingGame = 0;
-	safemutexunlock(&(gtp->gameInfo->clients[gtp->player2]->playingGame_mutex));
+	safemutexunlock(&(gtp->gameInfo->clients[gtp->player2]->client_mutex));
+
+	free(gtp);
 
 	return (void*)EXIT_SUCCESS;
 }
 
 void sendranking(struct GameInfo* gi)
 {
-	int rnk[MAX_CLIENT];
-	int ranking[MAX_CLIENT];
-	int i, j = 0;
-	int maxRank = -1;
-	int maxIndex = 0;
-	for (i = 0; i < MAX_CLIENT; ++i)
-		rnk[i] = -1;
-	ranking[0] = -1;
-
-	while (j < gi->numOfClients)
-	{
-		maxRank = -1;
-		for (i = 0; i < MAX_CLIENT; ++i)
-		{
-			safemutexlock(&(gi->clients_mutex[i]));
-			if (gi->clients[i]->fd <= 3)
-			{
-				safemutexunlock(&(gi->clients_mutex[i]));
-				continue;
-			}
-			if (gi->clients[i]->rank > maxRank && rnk[i] == -1)
-			{
-				maxRank = gi->clients[i]->rank;
-				maxIndex = i;
-			}
-			safemutexunlock(&(gi->clients_mutex[i]));
-		}
-		rnk[maxIndex] = maxRank;
-		ranking[j++] = maxIndex;
-	}
-
-	if (ranking[0] == -1)
-		return;
-
+	if (gi->numOfClients < 2) return;
+	int i;
 	char *buf;
 	if ((buf = (char*)malloc(50 * MAX_CLIENT * sizeof(char))) == NULL)
 		error("Cannot allocate memory");
+	memset(buf, '\0', sizeof(buf));
 
 	char message[50];
-	for (i = 0; i < j; ++i)
+	int len = 0;
+	int j = 1;
+	for (i = 0; i < MAX_CLIENT; ++i)
 	{
-		if (snprintf(message, 50, "%d. nick: %d - rank: %d\n", i, ranking[i], rnk[ranking[i]]) == -1)
-			error("Cannot write to buffer");
-		buf = strcat(buf, message);
+		safemutexlock(&(gi->clients[i]->client_mutex));
+		if (gi->clients[i] != NULL && gi->clients[i]->fd > 3)
+		{
+			if (snprintf(message, 50, "%d. nick: %d - rank: %d\n", j, gi->clients[i]->fd, gi->clients[i]->rank) == -1)
+				error("Cannot write to buffer");
+			len += strlen(message);
+			buf = strcat(buf, message);
+			++j;
+		}
+		safemutexunlock(&(gi->clients[i]->client_mutex));
 	}
 
 	for (i = 0; i < MAX_CLIENT; ++i)
 	{
-		safemutexlock(&(gi->clients_mutex[i]));
-		if (gi->clients[i]->fd != 0)
-			wwrite(gi->clients[i]->fd, buf, 50*MAX_CLIENT);
-		safemutexunlock(&(gi->clients_mutex[i]));
+		if (gi->clients[i]->fd > 3)
+		{
+			wwrite(gi->clients[i]->fd, buf, len);
+			fflush(NULL);
+		}
 	}
+
 	free(buf);
-}
-
-void* showranking(void* arg)
-{
-	struct GameInfo* gi = (struct GameInfo*)arg;
-	fprintf(stderr, "Inside showranking\n");
-	while (1)
-	{
-		safemutexlock(&(gi->finishedGame_mutex));
-		fprintf(stderr, "lock finishedGame_mutex\n");
-		pthread_cond_wait(&(gi->finishedGame), &(gi->finishedGame_mutex));
-		fprintf(stderr, "got finishedGame signal!\n");
-		safemutexlock(&(gi->numOfGames_mutex));
-		fprintf(stderr, "Num of games = %d, num of played games = %d\n", gi->numOfGames, gi->numOfPlayedGames);
-		if (gi->numOfGames != 0 && gi->numOfGames == gi->numOfPlayedGames)
-			sendranking(gi);
-		safemutexunlock(&(gi->numOfGames_mutex));
-		safemutexunlock(&(gi->finishedGame_mutex));
-	}
-
-	return (void*)EXIT_SUCCESS;
-}
-
-void showranking2(struct GameInfo* gi)
-{
-		safemutexlock(&(gi->numOfGames_mutex));
-		fprintf(stderr, "Num of games = %d, num of played games = %d\n", gi->numOfGames, gi->numOfPlayedGames);
-		if (gi->numOfGames != 0 && gi->numOfGames == gi->numOfPlayedGames)
-			sendranking(gi);
-		safemutexunlock(&(gi->numOfGames_mutex));
-
 }
 
 void* gamework(void* args)
 {
 	struct GameInfo* gameInfo = (struct GameInfo*)args;
 	int i, j;
-	pthread_t tid;
 	readwords(gameInfo);
-	pthread_create(&tid, NULL, showranking, &gameInfo);
+	struct GameThreadParams* gtp[MAX_CLIENT][MAX_CLIENT];
 
 	while (work)
 	{
 		safemutexlock(&(gameInfo->changeInClient_mutex));
 		pthread_cond_wait(&(gameInfo->changeInClient), &(gameInfo->changeInClient_mutex));
-		for (i = 0; i < MAX_CLIENT; ++i)
+		while (gameInfo->numOfPlayedGames < gameInfo->numOfGames)
 		{
-			for (j = 0; j < MAX_CLIENT; ++j)
+			for (i = 0; i < MAX_CLIENT; ++i)
 			{
-				if (i == j)
-					continue;
-				if (gameInfo->clients[i]->fd <= 3 || gameInfo->clients[j]->fd <= 3)
-					continue;
-				if (gameInfo->clients[i]->playingGame == 1 || gameInfo->clients[j]->playingGame == 1)
-					continue;
-				safemutexlock(&(gameInfo->games_mutex));
-				if (gameInfo->games[i][j] == 0)
+				for (j = 0; j < MAX_CLIENT; ++j)
 				{
-					gameInfo->games[i][j] = 1;
-					gameInfo->games[j][i] = 1;
-					struct GameThreadParams gtp;
-					pthread_mutex_init(&(gtp.finishGame_mutex), NULL);
-					pthread_cond_init(&(gtp.endGame),NULL);
-					gtp.gameInfo = gameInfo;
-					gtp.player1 = i;
-					gtp.player2 = j;
-					gtp.winner = 0;
-					pthread_create(&(gameInfo->tids[i][j]), NULL, playgame, &gtp);
+					if (i == j)
+						continue;
+					if (gameInfo->clients[i]->fd <= 3 || gameInfo->clients[j]->fd <= 3)
+						continue;
+					if (gameInfo->clients[i]->playingGame == 1 || gameInfo->clients[j]->playingGame == 1)
+						continue;
+
+					safemutexlock(&(gameInfo->games_mutex));
+					if (gameInfo->games[i][j] == 0)
+					{
+						gameInfo->games[i][j] = 1;
+						gameInfo->games[j][i] = 1;
+						if ((gtp[i][j] = (struct GameThreadParams*)malloc(sizeof(struct GameThreadParams))) == NULL)
+							error("Cannot allocate memory");
+						pthread_mutex_init(&(gtp[i][j]->finishGame_mutex), NULL);
+						pthread_cond_init(&(gtp[i][j]->endGame),NULL);
+						gtp[i][j]->gameInfo = gameInfo;
+						gtp[i][j]->player1 = i;
+						gtp[i][j]->player2 = j;
+						gtp[i][j]->winner = 0;
+						pthread_create(&(gameInfo->tids[i][j]), NULL, playgame, gtp[i][j]);
+					}
+					safemutexunlock(&(gameInfo->games_mutex));
 				}
-				safemutexunlock(&(gameInfo->games_mutex));
 			}
+			sleep(1);
 		}
+		fflush(NULL);
+		sendranking(gameInfo);
 		safemutexunlock(&(gameInfo->changeInClient_mutex));
 	}
 
@@ -553,7 +461,6 @@ void* gamework(void* args)
 		for (j = 0; j < MAX_CLIENT; ++j)
 			if (gameInfo->tids[i][j] != 0)
 				pthread_join(gameInfo->tids[i][j], NULL);
-	pthread_join(tid, NULL);
 
 	return (void*)EXIT_SUCCESS;
 }
@@ -561,38 +468,20 @@ void* gamework(void* args)
 void initilizecomponents(struct GameInfo* gameInfo)
 {
 	int i;
-	if ((gameInfo->clients = (struct Client**)calloc(MAX_CLIENT, sizeof(struct Client*))) == NULL)
-		error("Cannot allocate memory for Client array");
-	if ((gameInfo->games = (int**)calloc(MAX_CLIENT, sizeof(int*))) == NULL)
-		error("Cannot allocate memory of games array");
-	if ((gameInfo->tids = (pthread_t**)calloc(MAX_CLIENT, sizeof(pthread_t*))) == NULL)
-		error("Cannot allocate memory of tids array");
 	for (i = 0; i < MAX_CLIENT; ++i)
 	{
-		pthread_mutex_init(&(gameInfo->clients_mutex[i]), NULL);
 		if ((gameInfo->clients[i] = (struct Client*)calloc(1, sizeof(struct Client))) == NULL)
 			error("Cannot allocate memory for Client array");
-		if ((gameInfo->games[i] = (int*)calloc(1, sizeof(int))) == NULL)
-			error("Cannot allocate memory for games array");
-		if ((gameInfo->tids[i] = (pthread_t*)calloc(1, sizeof(pthread_t))) == NULL)
-			error("Cannot allocate memory for tids array");
-		pthread_mutex_init(&(gameInfo->clients[i]->playingGame_mutex), NULL);
-		pthread_cond_init(&(gameInfo->clients[i]->gameEnded),NULL);
-		//gameInfo->clients[i] = NULL;
+		pthread_mutex_init(&(gameInfo->clients[i]->client_mutex), NULL);
 	}
 	gameInfo->numOfClients = 0;
 	gameInfo->numOfGames = 0;
 	gameInfo->numOfPlayedGames = 0;
-	pthread_mutex_init(&(gameInfo->numOfClients_mutex), NULL);
-	pthread_mutex_init(&(gameInfo->numOfGames_mutex), NULL);
 	pthread_mutex_init(&(gameInfo->games_mutex), NULL);
 	pthread_mutex_init(&(gameInfo->numOfPlayedGames_mutex), NULL);
 	pthread_mutex_init(&(gameInfo->changeInClient_mutex), NULL);
-	pthread_mutex_init(&(gameInfo->finishedGame_mutex), NULL);
 
 	pthread_cond_init(&(gameInfo->changeInClient),NULL);
-	pthread_cond_init(&(gameInfo->finishedGame),NULL);
-	//pthread_mutex_init(&(gameInfo.clients_mutex), NULL);
 
 	for (i = 0; i < MAX_CLIENT; ++i)
 	{
@@ -637,28 +526,27 @@ int main(int argc, char **argv)
 	if (port < 1 || port > 65535)
 		USAGE(argv[0]);
 
-	initilizecomponents(&gameInfo);
+	struct GameInfo* gameInfo;
+	if ((gameInfo = (struct GameInfo*)malloc(sizeof(struct GameInfo))) == NULL)
+		error("Cannot allocate gameInfo buffer");
+
+	initilizecomponents(gameInfo);
 	work = 1;
 	registerhandlers();
 	s = create_socket(port);
 	fprintf(stderr, "Created Server socket\n");
 	serverThreadParams.s = s;
-	serverThreadParams.gameInfo = &gameInfo;
+	serverThreadParams.gameInfo = gameInfo;
 	pthread_create(&tidserver, NULL, serverwork, &serverThreadParams);
-	//serverwork(s/*, &gameInfo*/);
-	//if (pthread_sigmask(SIG_BLOCK, &mask, NULL))
-	//	error("Main: Cannot block SIGINT");
 
-	//playgame(&gameInfo);
-
-	pthread_create(&tidgame, NULL, gamework, &gameInfo);
+	pthread_create(&tidgame, NULL, gamework, gameInfo);
 	pthread_join(tidgame, NULL);
 	pthread_join(tidserver, NULL);
 
 	if (TEMP_FAILURE_RETRY(close(s)) == -1)
 		error("Cannot close socket");
 
-	deletecomponents(&gameInfo);
+	deletecomponents(gameInfo);
 	return EXIT_SUCCESS;
 }
 

@@ -16,31 +16,24 @@
 struct Client
 {
 	int fd;
-	int indeks;
-	int rank;
-	int numOfPlayedGames;
+	int indeks;;
 	int playingGame;
-	pthread_mutex_t playingGame_mutex;
-	pthread_cond_t gameEnded;
+	int rank;
+	pthread_mutex_t client_mutex;
 };
 
 struct GameInfo
 {
-	pthread_mutex_t clients_mutex[MAX_CLIENT];
-	pthread_mutex_t numOfClients_mutex;
-	pthread_mutex_t numOfGames_mutex;
 	pthread_mutex_t numOfPlayedGames_mutex;
 	pthread_mutex_t games_mutex;
 	pthread_mutex_t changeInClient_mutex;
-	pthread_mutex_t finishedGame_mutex;;
 	pthread_cond_t changeInClient;
-	pthread_cond_t finishedGame;
-	pthread_t** tids;
-	struct Client** clients;
+	pthread_t tids[MAX_CLIENT][MAX_CLIENT];
 	int numOfClients;
-	int** games;
+	int games[MAX_CLIENT][MAX_CLIENT];
 	int numOfGames;
 	int numOfPlayedGames;
+	struct Client* clients[MAX_CLIENT];
 	char* allWords[NUM_OF_WORDS];
 
 }gameInfo;

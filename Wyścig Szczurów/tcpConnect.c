@@ -35,6 +35,7 @@ void registerhandlers(void)
 
 ssize_t wread(int fd, char** buf, size_t size)
 {
+	fflush(NULL);
 	ssize_t nleft = size;
 	ssize_t nread;
 	char* p = *buf;
@@ -48,11 +49,13 @@ ssize_t wread(int fd, char** buf, size_t size)
 		}
 		break;
 	}
+	fflush(NULL);
 	return size - nleft;
 }
 
 ssize_t wwrite (int fd, const char* buf, size_t size)
 {
+	fflush(NULL);
 	size_t nleft = size;
 	ssize_t nwritten;
 	const char* p = buf;
@@ -68,6 +71,7 @@ ssize_t wwrite (int fd, const char* buf, size_t size)
 		nleft -= nwritten;
 		p += nwritten;
 	}
+	fflush(NULL);
 	return size;
 }
 
